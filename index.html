@@ -1,0 +1,265 @@
+<!--
+    PDF Manipulation Tool
+    Copyright (C) 2024 Koen van Eijk
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU Affero General Public License as published
+    by the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU Affero General Public License for more details.
+
+    You should have received a copy of the GNU Affero General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    This tool allows users to merge multiple PDFs into a single file,
+    split a PDF into multiple files, and edit PDF content.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Editor</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.9.359/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
+    <style>
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background-color: #f5f5f5; color: #333; }
+        .container { display: flex; gap: 20px; }
+        .sidebar { flex: 1; }
+        .main-content { flex: 2; }
+        .dropzone { border: 2px dashed #999; border-radius: 5px; padding: 20px; text-align: center; cursor: pointer; background-color: #fff; transition: all 0.3s ease; }
+        .dropzone:hover { background-color: #f0f0f0; }
+        .button-group { display: flex; justify-content: center; margin-top: 20px; }
+        button { padding: 10px 15px; border: none; border-radius: 5px; cursor: pointer; background-color: #333; color: #fff; transition: all 0.3s ease; }
+        button:hover { background-color: #555; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        #downloadBtn { font-size: 1.2em; font-weight: bold; }
+        #thumbnails { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; justify-content: center; }
+        .thumbnail-container { position: relative; width: 120px; }
+        .thumbnail { position: relative; width: 120px; height: 170px; border: 1px solid #ccc; cursor: move; background-color: #fff; box-shadow: 0 2px 5px rgba(0,0,0,0.1); transition: all 0.3s ease; }
+        .thumbnail:hover { transform: scale(1.05); }
+        .thumbnail img { width: 100%; height: 100%; object-fit: cover; }
+        .thumbnail .remove, .thumbnail .rotate { position: absolute; background: rgba(0, 0, 0, 0.7); color: white; border: none; cursor: pointer; border-radius: 50%; width: 24px; height: 24px; font-size: 14px; display: flex; justify-content: center; align-items: center; transition: all 0.3s ease; }
+        .thumbnail .remove { top: 5px; right: 5px; }
+        .thumbnail .rotate { bottom: 5px; right: 5px; }
+        .thumbnail .remove:hover, .thumbnail .rotate:hover { background: #000; }
+        .drop-zone { height: 3px; background: transparent; transition: all 0.3s ease; }
+        .drop-zone.active { height: 20px; background: #333; }
+        #preview { border: 1px solid #ccc; height: 600px; margin-top: 20px; overflow: auto; background-color: #fff; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <div class="dropzone" id="fileDropzone">
+                <p>Drag & drop PDF files here<br>or click to upload</p>
+                <input type="file" id="pdfFile" accept=".pdf" style="display: none;">
+            </div>
+            <div id="thumbnails"></div>
+        </div>
+        <div class="main-content">
+            <div id="preview"></div>
+            <div class="button-group">
+                <button id="downloadBtn" disabled>
+                    <i class="bi bi-download"></i> Download PDF
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let pdfDoc = null;
+        const pdfFile = document.getElementById('pdfFile');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const thumbnails = document.getElementById('thumbnails');
+        const fileDropzone = document.getElementById('fileDropzone');
+        const preview = document.getElementById('preview');
+
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.9.359/pdf.worker.min.js';
+
+        pdfFile.addEventListener('change', handleFileUpload);
+
+        fileDropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            fileDropzone.style.backgroundColor = '#f0f0f0';
+        });
+
+        fileDropzone.addEventListener('dragleave', () => {
+            fileDropzone.style.backgroundColor = '';
+        });
+
+        fileDropzone.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            fileDropzone.style.backgroundColor = '';
+            const file = e.dataTransfer.files[0];
+            if (file.type === 'application/pdf') {
+                await handleFileUpload({ target: { files: [file] } });
+            } else {
+                alert('Please upload a PDF file.');
+            }
+        });
+
+        fileDropzone.addEventListener('click', () => {
+            pdfFile.click();
+        });
+
+        async function handleFileUpload(e) {
+            const file = e.target.files[0];
+            const arrayBuffer = await file.arrayBuffer();
+            if (!pdfDoc) {
+                pdfDoc = await PDFLib.PDFDocument.load(arrayBuffer);
+            } else {
+                const pdfToAdd = await PDFLib.PDFDocument.load(arrayBuffer);
+                const copiedPages = await pdfDoc.copyPages(pdfToAdd, pdfToAdd.getPageIndices());
+                copiedPages.forEach(page => pdfDoc.addPage(page));
+            }
+            renderThumbnails();
+            downloadBtn.disabled = false;
+        }
+
+        async function renderThumbnails() {
+            thumbnails.innerHTML = '';
+            const numPages = pdfDoc.getPageCount();
+            
+            for (let i = 0; i < numPages; i++) {
+                const pdfData = await pdfDoc.saveAsBase64({dataUri: true});
+                const loadingTask = pdfjsLib.getDocument({data: atob(pdfData.split(',')[1])});
+                const pdf = await loadingTask.promise;
+                const page = await pdf.getPage(i + 1);
+                
+                const scale = 1;
+                const viewport = page.getViewport({scale});
+                
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+                
+                await page.render({canvasContext: context, viewport}).promise;
+                
+                const thumbnailContainer = document.createElement('div');
+                thumbnailContainer.className = 'thumbnail-container';
+                thumbnailContainer.innerHTML = `
+                    <div class="drop-zone" data-index="${i}"></div>
+                    <div class="thumbnail" draggable="true" data-page-index="${i}">
+                        <img src="${canvas.toDataURL()}" alt="Page ${i + 1}">
+                        <button class="remove" data-page="${i}"><i class="bi bi-trash"></i></button>
+                        <button class="rotate" data-page="${i}"><i class="bi bi-arrow-clockwise"></i></button>
+                    </div>
+                `;
+                thumbnails.appendChild(thumbnailContainer);
+            }
+
+            // Add a final drop zone after the last thumbnail
+            const finalDropZone = document.createElement('div');
+            finalDropZone.className = 'drop-zone';
+            finalDropZone.dataset.index = numPages.toString();
+            thumbnails.appendChild(finalDropZone);
+
+            document.querySelectorAll('.thumbnail').forEach(thumbnail => {
+                thumbnail.addEventListener('dragstart', dragStart);
+            });
+
+            document.querySelectorAll('.drop-zone').forEach(dropZone => {
+                dropZone.addEventListener('dragover', dragOver);
+                dropZone.addEventListener('dragenter', dragEnter);
+                dropZone.addEventListener('dragleave', dragLeave);
+                dropZone.addEventListener('drop', drop);
+            });
+
+            document.querySelectorAll('.remove').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    const pageIndex = parseInt(btn.dataset.page);
+                    pdfDoc.removePage(pageIndex);
+                    renderThumbnails();
+                });
+            });
+
+            document.querySelectorAll('.rotate').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    const pageIndex = parseInt(btn.dataset.page);
+                    const page = pdfDoc.getPage(pageIndex);
+                    page.setRotation(PDFLib.degrees((page.getRotation().angle + 90) % 360));
+                    renderThumbnails();
+                });
+            });
+
+            updatePreview();
+        }
+
+        function dragStart(e) {
+            e.dataTransfer.setData('text/plain', e.target.closest('.thumbnail').dataset.pageIndex);
+        }
+
+        function dragOver(e) {
+            e.preventDefault();
+        }
+
+        function dragEnter(e) {
+            e.preventDefault();
+            e.target.classList.add('active');
+        }
+
+        function dragLeave(e) {
+            e.target.classList.remove('active');
+        }
+
+        async function drop(e) {
+            e.preventDefault();
+            e.target.classList.remove('active');
+            const fromIndex = parseInt(e.dataTransfer.getData('text'));
+            const toIndex = parseInt(e.target.dataset.index);
+            if (!isNaN(fromIndex) && !isNaN(toIndex) && fromIndex !== toIndex) {
+                const movedPage = pdfDoc.getPage(fromIndex);
+                pdfDoc.removePage(fromIndex);
+                pdfDoc.insertPage(toIndex, movedPage);
+                renderThumbnails();
+            }
+        }
+
+        async function updatePreview(pageIndex = 0) {
+            const pdfData = await pdfDoc.saveAsBase64({dataUri: true});
+            const loadingTask = pdfjsLib.getDocument({data: atob(pdfData.split(',')[1])});
+            const pdf = await loadingTask.promise;
+            const page = await pdf.getPage(pageIndex + 1);
+            
+            const scale = 1.5;
+            const viewport = page.getViewport({scale});
+            
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+            
+            await page.render({canvasContext: context, viewport}).promise;
+            
+            preview.innerHTML = '';
+            preview.appendChild(canvas);
+        }
+
+        thumbnails.addEventListener('click', (e) => {
+            if (e.target.closest('.thumbnail')) {
+                const pageIndex = parseInt(e.target.closest('.thumbnail').dataset.pageIndex);
+                updatePreview(pageIndex);
+            }
+        });
+
+        downloadBtn.addEventListener('click', async () => {
+            const pdfBytes = await pdfDoc.save();
+            const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'edited.pdf';
+            link.click();
+        });
+    </script>
+</body>
+</html>
